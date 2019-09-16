@@ -17,17 +17,19 @@ After Effects projects.
 ```python
 import asyncio
 
+from pathlib import Path
+
 from aerender import AERenderWrapper
 
 asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 if __name__ == '__main__':
-    AERENDER_FULLPATH = 'C:\Program Files\Adobe\Adobe After Effects CC 2019\Support Files\\aerender'
+    AERENDER_FULLPATH = Path('C:/Program Files/Adobe/Adobe After Effects CC 2019/Support Files/aerender')
     aerender = AERenderWrapper(exe_path=AERENDER_FULLPATH)
     coro = aerender.run(
-        project_path='"c:\projects\proj1.aep"',
+        project_path=Path('C:/projects/proj1.aep'),
         comp_name='"Comp 1"',
-        output_path='"c:\output\proj1\proj1.avi"',
+        output_path=Path('C:/output/proj1/proj1.avi'),
     )
     asyncio.run(coro)
 ```
