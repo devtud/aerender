@@ -28,7 +28,7 @@ if __name__ == '__main__':
     aerender = AERenderWrapper(exe_path=AERENDER_FULLPATH)
     coro = aerender.run(
         project_path=Path('C:/projects/proj1.aep'),
-        comp_name='"Comp 1"',
+        comp_name='Comp 1',
         output_path=Path('C:/output/proj1/proj1.avi'),
     )
     asyncio.run(coro)
