@@ -2,9 +2,10 @@ import asyncio
 import logging
 from asyncio import StreamReader
 from pathlib import Path
-from typing import Callable
 
-from .exceptions import AERenderError
+from .exceptions import (AERenderError, AfterEffectsError, CompositionNotFoundError,
+                         PathNotFoundError)
+
 
 __all__ = ['AERenderWrapper']
 
@@ -18,14 +19,14 @@ class AERenderWrapper:
         self.exe_path: Path = exe_path
 
     async def run(
-            self, reuse: bool = None, project_path: Path = None, project_name: str = None,
-            comp_name: str = None, index_in_render_queue: str = None,
-            render_settings_template: str = None, output_module_template: str = None,
-            output_path: Path = None, logfile_path: Path = None, start_frame: int = None,
-            end_frame: int = None, increment: int = None, image_cache_percent: int = None,
-            max_mem_percent: int = None, verbose_flag: str = None, close_flag: str = None,
-            sound_flag: str = None, continue_on_missing_footage: bool = None,
-            version: bool = None):
+        self, reuse: bool = None, project_path: Path = None, project_name: str = None,
+        comp_name: str = None, index_in_render_queue: str = None,
+        render_settings_template: str = None, output_module_template: str = None,
+        output_path: Path = None, logfile_path: Path = None, start_frame: int = None,
+        end_frame: int = None, increment: int = None, image_cache_percent: int = None,
+        max_mem_percent: int = None, verbose_flag: str = None, close_flag: str = None,
+        sound_flag: str = None, continue_on_missing_footage: bool = None,
+        version: bool = None):
         """
         Args:
             reuse: use this flag if you want to try and reuse an already running instance
@@ -108,6 +109,30 @@ class AERenderWrapper:
             max_mem_percent=max_mem_percent, verbose_flag=verbose_flag,
             close_flag=close_flag, sound_flag=sound_flag,
             continue_on_missing_footage=continue_on_missing_footage, version=version)
+        result = await self.run_command(command)
+        return result
+
+    @staticmethod
+    async def run_command(command: str):
+        async def log_generator(reader: StreamReader, tag: str):
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                decoded = line.decode().strip()
+                yield decoded, tag
+
+        async def check_and_raise(log_line: str):
+            if 'After Effects error' in log_line:
+                if 'Path is not valid' in log_line:
+                    raise PathNotFoundError(log_line)
+                raise AfterEffectsError(log_line)
+            if 'aerender ERROR' in log_line:
+                if 'No comp was found with the given name' in log_line:
+                    raise CompositionNotFoundError(log_line)
+                raise AERenderError(log_line)
+            if 'LoadLibrary "n" failed' in log_line:
+                raise AERenderError(log_line)
 
         process = await asyncio.create_subprocess_shell(
             command,
@@ -115,50 +140,41 @@ class AERenderWrapper:
             stderr=asyncio.subprocess.PIPE
         )
 
-        async def log_process_std(reader: StreamReader, logger_func: Callable = print):
-            while True:
-                line = await reader.readline()
-
-                if not line:
-                    break
-
-                decoded = line.decode().strip()
-
-                logger_func(decoded)
-
-        log_stdout_task = asyncio.create_task(
-            log_process_std(process.stdout, logger.info))
-
-        log_stderr_task = asyncio.create_task(
-            log_process_std(process.stderr, logger.error))
-
         process_task = asyncio.create_task(process.wait())
 
-        await asyncio.gather(process_task, log_stdout_task, log_stderr_task)
+        stdout_log_generator = log_generator(process.stdout, 'stdout')
 
-        print(f'[{command!r} exited with {process.returncode}]')
+        # TODO check and parse stderr also
+        # stderr_log_generator = log_generator(process.stderr, 'stderr')
 
-        stderr = await process.stderr.read()
+        async for log_line, log_tag in stdout_log_generator:
+            logger.info(f'{log_tag}: {log_line}')
+            try:
+                await check_and_raise(log_line)
+            except AERenderError as e:
+                logger.error(f'Waiting for process to finish due to error: {e}')
+                await process_task
+                raise e
 
-        if stderr:
-            raise AERenderError(stderr.decode())
+        await asyncio.gather(process_task)
 
-        if process.returncode < 0:
-            raise AERenderError()
+        logger.info(f'[{command!r} exited with {process.returncode}]')
 
         return None
 
     @staticmethod
     async def get_command(
-            aerender_abs_path: Path, *, reuse: bool = None, project_path: Path = None,
-            project_name: str = None, comp_name: str = None,
-            index_in_render_queue: str = None, render_settings_template: str = None,
-            output_module_template: str = None, output_path: Path = None,
-            logfile_path: Path = None, start_frame: int = None, end_frame: int = None,
-            increment: int = None, image_cache_percent: int = None,
-            max_mem_percent: int = None, verbose_flag: str = None, close_flag: str = None,
-            sound_flag: str = None, continue_on_missing_footage: bool = None,
-            version: bool = None) -> str:
+        aerender_abs_path: Path, *, reuse: bool = None, project_path: Path = None,
+        project_name: str = None, comp_name: str = None,
+        index_in_render_queue: str = None, render_settings_template: str = None,
+        output_module_template: str = None, output_path: Path = None,
+        logfile_path: Path = None, start_frame: int = None, end_frame: int = None,
+        increment: int = None, image_cache_percent: int = None,
+        max_mem_percent: int = None, verbose_flag: str = None, close_flag: str = None,
+        sound_flag: str = None, continue_on_missing_footage: bool = None,
+        version: bool = None
+    ) -> str:
+
         command = f'"{aerender_abs_path}"'
         if reuse:
             command += f' -reuse'
